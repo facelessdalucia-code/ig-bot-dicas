@@ -15,12 +15,13 @@ IG_USER_ID = os.environ["IG_USER_ID"]
 
 GRAPH_URL = "https://graph.instagram.com/v21.0"
 
-DM_MESSAGE = (
+DM_TEXT = (
     "Olá! Separei um teste rápido pra descobrir qual receita natural mais "
     "pode te ajudar hoje.\n\n"
-    "Leva menos de 1 minuto, e no final você já recebe uma receita de graça.\n\n"
-    "https://bit.ly/4gWVOPl"
+    "Leva menos de 1 minuto, e no final você já recebe uma receita de graça."
 )
+DM_LINK = "https://bit.ly/4gWVOPl"
+DM_BUTTON_TITLE = "Clique aqui para receber"
 
 PUBLIC_REPLY = "Te mandei no direct! 📩"
 
@@ -79,7 +80,7 @@ def webhook():
             log.info("Comentário de %s (%s)", username, comment_id)
 
             reply_to_comment(comment_id, PUBLIC_REPLY)
-            send_private_reply(comment_id, DM_MESSAGE)
+            send_private_reply_with_button(comment_id, DM_TEXT, DM_BUTTON_TITLE, DM_LINK)
 
     return jsonify(status="ok"), 200
 
@@ -95,14 +96,29 @@ def reply_to_comment(comment_id: str, message: str):
         log.error("Erro ao responder comentário %s: %s", comment_id, resp.text)
 
 
-def send_private_reply(comment_id: str, message: str):
+def send_private_reply_with_button(comment_id: str, text: str, button_title: str, url_link: str):
     url = f"{GRAPH_URL}/me/messages"
     resp = requests.post(
         url,
         params={"access_token": PAGE_ACCESS_TOKEN},
         json={
             "recipient": {"comment_id": comment_id},
-            "message": {"text": message},
+            "message": {
+                "attachment": {
+                    "type": "template",
+                    "payload": {
+                        "template_type": "button",
+                        "text": text,
+                        "buttons": [
+                            {
+                                "type": "web_url",
+                                "url": url_link,
+                                "title": button_title,
+                            }
+                        ],
+                    },
+                }
+            },
         },
     )
     if not resp.ok:
