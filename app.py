@@ -1,5 +1,7 @@
 import os
 import logging
+import threading
+import time
 
 import requests
 from flask import Flask, request, jsonify
@@ -24,6 +26,23 @@ DM_LINK = "https://bit.ly/4gWVOPl"
 DM_BUTTON_TITLE = "Clique aqui para receber"
 
 PUBLIC_REPLY = "Te mandei no direct! 📩"
+
+_processed_comments = {}
+_processed_lock = threading.Lock()
+_DEDUPE_TTL_SECONDS = 3600
+
+
+def already_processed(comment_id: str) -> bool:
+    now = time.time()
+    with _processed_lock:
+        # limpa entradas velhas
+        for cid in list(_processed_comments):
+            if now - _processed_comments[cid] > _DEDUPE_TTL_SECONDS:
+                del _processed_comments[cid]
+        if comment_id in _processed_comments:
+            return True
+        _processed_comments[comment_id] = now
+        return False
 
 
 @app.route("/privacy", methods=["GET"])
@@ -65,6 +84,14 @@ def webhook():
     data = request.get_json(force=True)
     log.info("Evento recebido: %s", data)
 
+    # responde rápido pro Meta e processa em background, pra evitar que
+    # ele reenvie o mesmo evento por causa de timeout
+    threading.Thread(target=process_event, args=(data,), daemon=True).start()
+
+    return jsonify(status="ok"), 200
+
+
+def process_event(data: dict):
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             if change.get("field") != "comments":
@@ -77,12 +104,14 @@ def webhook():
             if not comment_id or from_user.get("id") == IG_USER_ID:
                 continue
 
+            if already_processed(comment_id):
+                log.info("Comentário %s já processado, ignorando", comment_id)
+                continue
+
             log.info("Comentário de %s (%s)", username, comment_id)
 
             reply_to_comment(comment_id, PUBLIC_REPLY)
             send_private_reply_with_button(comment_id, DM_TEXT, DM_BUTTON_TITLE, DM_LINK)
-
-    return jsonify(status="ok"), 200
 
 
 def reply_to_comment(comment_id: str, message: str):
