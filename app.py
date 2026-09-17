@@ -25,6 +25,30 @@ DM_MESSAGE = (
 PUBLIC_REPLY = "Te mandei no direct! 📩"
 
 
+@app.route("/privacy", methods=["GET"])
+def privacy():
+    return """
+    <html>
+    <head><title>Política de Privacidade</title></head>
+    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
+        <h1>Política de Privacidade</h1>
+        <p>Este aplicativo automatiza respostas a comentários e mensagens
+        diretas na conta do Instagram @dicas_da_cilene.</p>
+        <p>Os dados acessados (comentários públicos, nome de usuário do
+        Instagram e mensagens diretas) são usados exclusivamente para
+        responder automaticamente aos usuários que interagem com os posts
+        da conta, enviando informações e links relacionados ao conteúdo
+        publicado.</p>
+        <p>Nenhum dado é vendido, compartilhado com terceiros ou usado para
+        fins diferentes deste. Os dados não ficam armazenados de forma
+        permanente pelo aplicativo.</p>
+        <p>Para dúvidas ou solicitações de remoção de dados, entre em
+        contato pela própria conta do Instagram @dicas_da_cilene.</p>
+    </body>
+    </html>
+    """, 200
+
+
 @app.route("/webhook", methods=["GET"])
 def verify():
     mode = request.args.get("hub.mode")
