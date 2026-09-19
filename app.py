@@ -21,12 +21,24 @@ FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
 GRAPH_URL = "https://graph.instagram.com/v21.0"
 FB_GRAPH_URL = "https://graph.facebook.com/v21.0"
 
-DM_TEXT = (
+DM_TEXTS = [
     "Oi! Que bom que você comentou 💚\n\n"
     "Preparei um teste rápido pra descobrir qual receita natural mais "
     "pode te ajudar hoje. Leva menos de 1 minuto e é totalmente gratuito.\n\n"
-    "É só clicar no botão abaixo:"
-)
+    "É só clicar no botão abaixo:",
+    "Olá! Obrigada pelo comentário 🌿\n\n"
+    "Montei um teste gratuito de menos de 1 minuto que mostra qual receita "
+    "natural combina mais com você agora.\n\n"
+    "Toca no botão pra começar:",
+    "Oi, tudo bem? Vi seu comentário e queria te ajudar 💚\n\n"
+    "Fiz um teste bem rápido (1 minutinho, de graça) pra indicar a receita "
+    "natural ideal pro seu momento.\n\n"
+    "É só clicar aqui embaixo:",
+    "Que bom ter você por aqui! ✨\n\n"
+    "Separei um teste gratuito e rápido pra descobrir qual receita natural "
+    "pode te ajudar hoje.\n\n"
+    "Clica no botão pra fazer:",
+]
 DM_LINK = "https://cilene-sales-page.vercel.app"
 DM_BUTTON_TITLE = "Clique aqui para receber"
 
@@ -134,7 +146,7 @@ def process_facebook_event(data: dict):
                             "type": "template",
                             "payload": {
                                 "template_type": "button",
-                                "text": DM_TEXT,
+                                "text": random.choice(DM_TEXTS),
                                 "buttons": [{"type": "web_url", "url": DM_LINK, "title": DM_BUTTON_TITLE}],
                             },
                         }
@@ -176,7 +188,7 @@ def process_event(data: dict):
             log.info("Comentário de %s (%s)", username, comment_id)
 
             reply_to_comment(comment_id, random.choice(PUBLIC_REPLIES))
-            send_private_reply_with_button(comment_id, DM_TEXT, DM_BUTTON_TITLE, DM_LINK)
+            send_private_reply_with_button(comment_id, random.choice(DM_TEXTS), DM_BUTTON_TITLE, DM_LINK)
 
 
 def reply_to_comment(comment_id: str, message: str):
