@@ -19,9 +19,10 @@ IG_USER_ID = os.environ["IG_USER_ID"]
 GRAPH_URL = "https://graph.instagram.com/v21.0"
 
 DM_TEXT = (
-    "Olá! Separei um teste rápido pra descobrir qual receita natural mais "
-    "pode te ajudar hoje.\n\n"
-    "Leva menos de 1 minuto, e no final você já recebe uma receita de graça."
+    "Oi! Que bom que você comentou 💚\n\n"
+    "Preparei um teste rápido pra descobrir qual receita natural mais "
+    "pode te ajudar hoje. Leva menos de 1 minuto e é totalmente gratuito.\n\n"
+    "É só clicar no botão abaixo:"
 )
 DM_LINK = "https://cilene-sales-page.vercel.app"
 DM_BUTTON_TITLE = "Clique aqui para receber"
