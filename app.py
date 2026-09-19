@@ -16,7 +16,10 @@ VERIFY_TOKEN = os.environ["VERIFY_TOKEN"]
 PAGE_ACCESS_TOKEN = os.environ["PAGE_ACCESS_TOKEN"]
 IG_USER_ID = os.environ["IG_USER_ID"]
 
+FB_PAGE_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
+
 GRAPH_URL = "https://graph.instagram.com/v21.0"
+FB_GRAPH_URL = "https://graph.facebook.com/v21.0"
 
 DM_TEXT = (
     "Oi! Que bom que você comentou 💚\n\n"
@@ -97,7 +100,56 @@ def webhook():
     return jsonify(status="ok"), 200
 
 
+def process_facebook_event(data: dict):
+    for entry in data.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            if change.get("field") != "feed" or value.get("item") != "comment" or value.get("verb") != "add":
+                continue
+            comment_id = value.get("comment_id")
+            from_user = value.get("from", {})
+
+            if not comment_id or from_user.get("id") == entry.get("id"):
+                continue
+            # resposta a outro comentário (sub-comentário): ignora, só top-level
+            if value.get("parent_id") and value.get("parent_id") != value.get("post_id"):
+                continue
+            if already_processed(comment_id):
+                continue
+
+            log.info("FB comentário de %s (%s)", from_user.get("name"), comment_id)
+
+            requests.post(
+                f"{FB_GRAPH_URL}/{comment_id}/comments",
+                params={"access_token": FB_PAGE_ACCESS_TOKEN},
+                data={"message": random.choice(PUBLIC_REPLIES).replace("direct", "inbox")},
+            )
+            resp = requests.post(
+                f"{FB_GRAPH_URL}/me/messages",
+                params={"access_token": FB_PAGE_ACCESS_TOKEN},
+                json={
+                    "recipient": {"comment_id": comment_id},
+                    "message": {
+                        "attachment": {
+                            "type": "template",
+                            "payload": {
+                                "template_type": "button",
+                                "text": DM_TEXT,
+                                "buttons": [{"type": "web_url", "url": DM_LINK, "title": DM_BUTTON_TITLE}],
+                            },
+                        }
+                    },
+                },
+            )
+            if not resp.ok:
+                log.error("FB erro ao enviar mensagem %s: %s", comment_id, resp.text)
+
+
 def process_event(data: dict):
+    if data.get("object") == "page":
+        if FB_PAGE_ACCESS_TOKEN:
+            process_facebook_event(data)
+        return
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             if change.get("field") != "comments":
