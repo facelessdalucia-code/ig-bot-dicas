@@ -40,7 +40,16 @@ DM_TEXTS = [
     "Clica no botão pra fazer:",
 ]
 DM_LINK = "https://cilene-sales-page.vercel.app"
-DM_BUTTON_TITLE = "Clique aqui para receber"
+DM_BUTTON_TITLE = "Clique aqui para receber"  # usado só no fluxo do Facebook
+
+CLICK_BUTTON_TITLE = "QUERO ✅"
+CLICK_PAYLOAD = "QUERO_LINK"
+
+FINAL_DM_TEXTS = [
+    "Perfeito! Aqui está o seu teste 👇\n{link}",
+    "Que bom! Foi só clicar aqui pra fazer o teste 👇\n{link}",
+    "Prontinho! Seu teste gratuito está aqui 👇\n{link}",
+]
 
 PUBLIC_REPLIES = [
     "Te mandei no direct! 📩",
@@ -163,6 +172,8 @@ def process_event(data: dict):
             process_facebook_event(data)
         return
     for entry in data.get("entry", []):
+        for event in entry.get("messaging", []):
+            handle_messaging_event(entry, event)
         for change in entry.get("changes", []):
             if change.get("field") != "comments":
                 continue
@@ -188,7 +199,7 @@ def process_event(data: dict):
             log.info("Comentário de %s (%s)", username, comment_id)
 
             reply_to_comment(comment_id, random.choice(PUBLIC_REPLIES))
-            send_private_reply_with_button(comment_id, random.choice(DM_TEXTS), DM_BUTTON_TITLE, DM_LINK)
+            send_private_reply_with_click(comment_id, random.choice(DM_TEXTS))
 
 
 def reply_to_comment(comment_id: str, message: str):
@@ -202,33 +213,86 @@ def reply_to_comment(comment_id: str, message: str):
         log.error("Erro ao responder comentário %s: %s", comment_id, resp.text)
 
 
-def send_private_reply_with_button(comment_id: str, text: str, button_title: str, url_link: str):
-    url = f"{GRAPH_URL}/me/messages"
-    resp = requests.post(
-        url,
+def _post_message(body: dict) -> requests.Response:
+    return requests.post(
+        f"{GRAPH_URL}/me/messages",
         params={"access_token": PAGE_ACCESS_TOKEN},
-        json={
-            "recipient": {"comment_id": comment_id},
-            "message": {
-                "attachment": {
-                    "type": "template",
-                    "payload": {
-                        "template_type": "button",
-                        "text": text,
-                        "buttons": [
-                            {
-                                "type": "web_url",
-                                "url": url_link,
-                                "title": button_title,
-                            }
-                        ],
-                    },
-                }
-            },
-        },
+        json=body,
     )
-    if not resp.ok:
-        log.error("Erro ao enviar DM pro comentário %s: %s", comment_id, resp.text)
+
+
+def send_private_reply_with_click(comment_id: str, text: str):
+    # Private Reply (recipient.comment_id) sem link, com botão de interação.
+    # A doc só documenta "text" em Private Reply; tenta quick_replies e, se a
+    # API recusar, cai pra botão postback em template.
+    quick_reply_body = {
+        "recipient": {"comment_id": comment_id},
+        "message": {
+            "text": text,
+            "quick_replies": [
+                {"content_type": "text", "title": CLICK_BUTTON_TITLE, "payload": CLICK_PAYLOAD}
+            ],
+        },
+    }
+    resp = _post_message(quick_reply_body)
+    if resp.ok:
+        log.info("Private Reply enviada (comment_id=%s, formato=quick_reply): %s", comment_id, resp.text)
+        return
+    log.error("Private Reply com quick_reply recusada (comment_id=%s): %s", comment_id, resp.text)
+
+    postback_body = {
+        "recipient": {"comment_id": comment_id},
+        "message": {
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "button",
+                    "text": text,
+                    "buttons": [
+                        {"type": "postback", "title": CLICK_BUTTON_TITLE, "payload": CLICK_PAYLOAD}
+                    ],
+                },
+            }
+        },
+    }
+    resp = _post_message(postback_body)
+    if resp.ok:
+        log.info("Private Reply enviada (comment_id=%s, formato=postback): %s", comment_id, resp.text)
+    else:
+        log.error("Erro ao enviar Private Reply (comment_id=%s, formato=postback): %s", comment_id, resp.text)
+
+
+def handle_messaging_event(entry: dict, event: dict):
+    sender_id = event.get("sender", {}).get("id")
+    message = event.get("message") or {}
+    postback = event.get("postback") or {}
+
+    if message.get("is_echo") or sender_id in {IG_USER_ID, entry.get("id")}:
+        return
+
+    quick_reply_payload = (message.get("quick_reply") or {}).get("payload")
+    payload = quick_reply_payload or postback.get("payload")
+    if payload != CLICK_PAYLOAD:
+        return
+
+    via = "quick_reply" if quick_reply_payload else "postback"
+    mid = message.get("mid") or postback.get("mid") or f"{sender_id}:{event.get('timestamp')}"
+    if already_processed(f"click:{mid}"):
+        log.info("Clique %s já processado, ignorando", mid)
+        return
+
+    log.info("Clique recebido (via=%s, payload=%s)", via, payload)
+    log.info("IGSID identificado: %s", sender_id)
+    send_final_dm(sender_id)
+
+
+def send_final_dm(igsid: str):
+    text = random.choice(FINAL_DM_TEXTS).format(link=DM_LINK)
+    resp = _post_message({"recipient": {"id": igsid}, "message": {"text": text}})
+    if resp.ok:
+        log.info("Segunda DM enviada (igsid=%s): %s", igsid, resp.text)
+    else:
+        log.error("Erro ao enviar segunda DM (igsid=%s): %s", igsid, resp.text)
 
 
 if __name__ == "__main__":
