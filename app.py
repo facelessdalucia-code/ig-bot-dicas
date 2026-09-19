@@ -1,5 +1,6 @@
 import os
 import logging
+import random
 import threading
 import time
 
@@ -22,10 +23,14 @@ DM_TEXT = (
     "pode te ajudar hoje.\n\n"
     "Leva menos de 1 minuto, e no final você já recebe uma receita de graça."
 )
-DM_LINK = "https://bit.ly/4gWVOPl"
+DM_LINK = "https://cilene-sales-page.vercel.app"
 DM_BUTTON_TITLE = "Clique aqui para receber"
 
-PUBLIC_REPLY = "Te mandei no direct! 📩"
+PUBLIC_REPLIES = [
+    "Te mandei no direct! 📩",
+    "Acabei de te enviar uma mensagem no direct, dá uma olhadinha! 💚",
+    "Olha lá no seu direct, mandei tudo por lá! ✨",
+]
 
 _processed_comments = {}
 _processed_lock = threading.Lock()
@@ -110,7 +115,7 @@ def process_event(data: dict):
 
             log.info("Comentário de %s (%s)", username, comment_id)
 
-            reply_to_comment(comment_id, PUBLIC_REPLY)
+            reply_to_comment(comment_id, random.choice(PUBLIC_REPLIES))
             send_private_reply_with_button(comment_id, DM_TEXT, DM_BUTTON_TITLE, DM_LINK)
 
 
