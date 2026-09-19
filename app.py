@@ -159,7 +159,14 @@ def process_event(data: dict):
             from_user = value.get("from", {})
             username = from_user.get("username")
 
-            if not comment_id or from_user.get("id") == IG_USER_ID:
+            own_ids = {IG_USER_ID, entry.get("id")}
+            if (
+                not comment_id
+                or value.get("parent_id")
+                or from_user.get("id") in own_ids
+                or from_user.get("self_ig_scoped_id")
+                or username == "dicas_da_cilene"
+            ):
                 continue
 
             if already_processed(comment_id):
