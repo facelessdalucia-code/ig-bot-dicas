@@ -222,9 +222,28 @@ def _post_message(body: dict) -> requests.Response:
 
 
 def send_private_reply_with_click(comment_id: str, text: str):
-    # Private Reply (recipient.comment_id) sem link, com botão de interação.
-    # A doc só documenta "text" em Private Reply; tenta quick_replies e, se a
-    # API recusar, cai pra botão postback em template.
+    # Private Reply (recipient.comment_id) com o botão de link direto.
+    # Se a API recusar esse formato no primeiro contato, cai pro fluxo em
+    # duas etapas (quick_reply -> segunda DM com o link).
+    link_button_body = {
+        "recipient": {"comment_id": comment_id},
+        "message": {
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "button",
+                    "text": text,
+                    "buttons": [{"type": "web_url", "url": DM_LINK, "title": DM_BUTTON_TITLE}],
+                },
+            }
+        },
+    }
+    resp = _post_message(link_button_body)
+    if resp.ok:
+        log.info("Private Reply enviada (comment_id=%s, formato=link_button): %s", comment_id, resp.text)
+        return
+    log.error("Private Reply com link_button recusada (comment_id=%s): %s", comment_id, resp.text)
+
     quick_reply_body = {
         "recipient": {"comment_id": comment_id},
         "message": {
