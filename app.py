@@ -1,11 +1,18 @@
 import os
+import html
 import logging
+import uuid
 import random
 import threading
 import time
 
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
+
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ig-bot")
@@ -40,6 +47,30 @@ DM_TEXTS = [
     "Clica no botão pra fazer:",
 ]
 DM_LINK = "https://cilene-sales-page.vercel.app"
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://ig-bot-dicas-cilene.onrender.com").rstrip("/")
+LINK_A = PUBLIC_URL + "/go/a"
+LINK_B = PUBLIC_URL + "/go/b"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+STATS_KEY = os.environ.get("STATS_KEY", "")
+
+DM_TEXTS_B = [
+    "Oi! Que bom que você comentou 💚\n\n"
+    "Preparei um teste rápido pra descobrir qual receita natural mais "
+    "pode te ajudar hoje. Leva menos de 1 minuto e é totalmente gratuito.\n\n"
+    "É só clicar no link:\n{link}",
+    "Olá! Obrigada pelo comentário 🌿\n\n"
+    "Montei um teste gratuito de menos de 1 minuto que mostra qual receita "
+    "natural combina mais com você agora.\n\n"
+    "Toca no link pra começar:\n{link}",
+    "Oi, tudo bem? Vi seu comentário e queria te ajudar 💚\n\n"
+    "Fiz um teste bem rápido (1 minutinho, de graça) pra indicar a receita "
+    "natural ideal pro seu momento.\n\n"
+    "É só clicar aqui:\n{link}",
+    "Que bom ter você por aqui! ✨\n\n"
+    "Separei um teste gratuito e rápido pra descobrir qual receita natural "
+    "pode te ajudar hoje.\n\n"
+    "Clica no link pra fazer:\n{link}",
+]
 DM_BUTTON_TITLE = "Clique aqui para receber"  # usado só no fluxo do Facebook
 
 CLICK_BUTTON_TITLE = "QUERO ✅"
@@ -60,6 +91,50 @@ PUBLIC_REPLIES = [
 _processed_comments = {}
 _processed_lock = threading.Lock()
 _DEDUPE_TTL_SECONDS = 3600
+
+
+BOT_UA_MARKERS = ("facebookexternalhit", "facebot", "meta-externalagent", "bot", "crawler", "spider", "preview")
+
+
+def _db():
+    return psycopg.connect(DATABASE_URL, connect_timeout=5, autocommit=True)
+
+
+def init_db():
+    if not (DATABASE_URL and psycopg):
+        log.warning("DATABASE_URL não configurado, métricas A/B desligadas")
+        return
+    try:
+        with _db() as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS ab_events_cilene (
+                    id BIGSERIAL PRIMARY KEY,
+                    ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    variant TEXT NOT NULL,
+                    evt TEXT NOT NULL,
+                    sid TEXT NOT NULL,
+                    platform TEXT
+                )"""
+            )
+    except Exception:
+        log.exception("init_db falhou")
+
+
+def record(variant: str, evt: str, sid: str, platform: str = None):
+    if not (DATABASE_URL and psycopg):
+        return
+    try:
+        with _db() as conn:
+            conn.execute(
+                "INSERT INTO ab_events_cilene (variant, evt, sid, platform) VALUES (%s, %s, %s, %s)",
+                (variant, evt, sid[:64], platform),
+            )
+    except Exception:
+        log.exception("record falhou (%s %s)", variant, evt)
+
+
+def pick_variant() -> str:
+    return random.choice(("a", "b"))
 
 
 def already_processed(comment_id: str) -> bool:
@@ -97,6 +172,86 @@ def privacy():
     </body>
     </html>
     """, 200
+
+
+@app.route("/go/<variant>", methods=["GET"])
+def go(variant):
+    resp = redirect(DM_LINK, code=302)
+    resp.headers["Cache-Control"] = "no-store"
+    if variant not in ("a", "b"):
+        return resp
+    ua = (request.headers.get("User-Agent") or "").lower()
+    if any(m in ua for m in BOT_UA_MARKERS):
+        return resp
+    sid = request.cookies.get("cs_sid")
+    if not sid or len(sid) > 64:
+        sid = uuid.uuid4().hex
+        resp.set_cookie("cs_sid", sid, max_age=60 * 60 * 24 * 365, samesite="Lax", secure=True)
+    record(variant, "landed", sid)
+    return resp
+
+
+STATS_SQL = """
+SELECT variant,
+  COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
+  COUNT(*) FILTER (WHERE evt = 'landed') AS clicks,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS people
+FROM ab_events_cilene GROUP BY variant
+"""
+
+
+def _pct(n, d):
+    return f"{(100.0 * n / d):.1f}%" if d else "–"
+
+
+STATS_PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60"><title>Teste A/B — Cilene</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f5f2;color:#1d1d1f;margin:0;padding:24px 16px}
+main{max-width:760px;margin:0 auto}
+.wrap{overflow-x:auto;background:#fff;border:1px solid #e3e1dc;border-radius:12px}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{padding:12px 14px;border-bottom:1px solid #eee;text-align:right;font-variant-numeric:tabular-nums}
+thead th{text-align:left;font-size:12px;color:#666;font-weight:600}
+tbody th{text-align:left;font-weight:600}
+p.note{color:#666;font-size:13px;line-height:1.5}
+</style></head><body><main>
+<h1>Teste A/B — bot Cilene</h1>__ERR__
+<div class="wrap"><table><thead><tr><th>Versão</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
+<th>% que entrou</th><th>Cliques totais</th></tr></thead>
+<tbody>__ROWS__</tbody></table></div>
+<p class="note">Cada comentário sorteia A ou B (50/50). "Pessoas que entraram" conta cada navegador uma vez;
+"Cliques totais" inclui quem clicou mais de uma vez. A comparação mais justa é a coluna "% que entrou".
+Espere umas 100 DMs em cada versão antes de decidir. A página atualiza sozinha a cada minuto.</p>
+</main></body></html>"""
+
+
+@app.route("/stats", methods=["GET"])
+def stats():
+    if not STATS_KEY or request.args.get("key") != STATS_KEY:
+        return "forbidden", 403
+    rows = {"a": (0, 0, 0), "b": (0, 0, 0)}
+    err = ""
+    if DATABASE_URL and psycopg:
+        try:
+            with _db() as conn:
+                for v, *nums in conn.execute(STATS_SQL).fetchall():
+                    if v in rows:
+                        rows[v] = tuple(nums)
+        except Exception as exc:
+            err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
+    else:
+        err = "<p style='color:#b00'>Banco não configurado.</p>"
+    names = {"a": "A — DM com botão", "b": "B — link no texto"}
+    trs = ""
+    for v in ("a", "b"):
+        dms, clicks, people = rows[v]
+        trs += (
+            f"<tr><th>{names[v]}</th><td>{dms}</td><td>{people}</td>"
+            f"<td>{_pct(people, dms)}</td><td>{clicks}</td></tr>"
+        )
+    return STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs), 200
 
 
 @app.route("/webhook", methods=["GET"])
@@ -145,24 +300,28 @@ def process_facebook_event(data: dict):
                 params={"access_token": FB_PAGE_ACCESS_TOKEN},
                 data={"message": random.choice(PUBLIC_REPLIES).replace("direct", "inbox")},
             )
+            variant = pick_variant()
+            if variant == "b":
+                message = {"text": random.choice(DM_TEXTS_B).format(link=LINK_B)}
+            else:
+                message = {
+                    "attachment": {
+                        "type": "template",
+                        "payload": {
+                            "template_type": "button",
+                            "text": random.choice(DM_TEXTS),
+                            "buttons": [{"type": "web_url", "url": LINK_A, "title": DM_BUTTON_TITLE}],
+                        },
+                    }
+                }
             resp = requests.post(
                 f"{FB_GRAPH_URL}/me/messages",
                 params={"access_token": FB_PAGE_ACCESS_TOKEN},
-                json={
-                    "recipient": {"comment_id": comment_id},
-                    "message": {
-                        "attachment": {
-                            "type": "template",
-                            "payload": {
-                                "template_type": "button",
-                                "text": random.choice(DM_TEXTS),
-                                "buttons": [{"type": "web_url", "url": DM_LINK, "title": DM_BUTTON_TITLE}],
-                            },
-                        }
-                    },
-                },
+                json={"recipient": {"comment_id": comment_id}, "message": message},
             )
-            if not resp.ok:
+            if resp.ok:
+                record(variant, "dm_sent", comment_id, "facebook")
+            else:
                 log.error("FB erro ao enviar mensagem %s: %s", comment_id, resp.text)
 
 
@@ -199,7 +358,9 @@ def process_event(data: dict):
             log.info("Comentário de %s (%s)", username, comment_id)
 
             reply_to_comment(comment_id, random.choice(PUBLIC_REPLIES))
-            send_private_reply_with_click(comment_id, random.choice(DM_TEXTS))
+            variant = pick_variant()
+            if send_private_reply_with_click(comment_id, variant):
+                record(variant, "dm_sent", comment_id, "instagram")
 
 
 def reply_to_comment(comment_id: str, message: str):
@@ -221,10 +382,20 @@ def _post_message(body: dict) -> requests.Response:
     )
 
 
-def send_private_reply_with_click(comment_id: str, text: str):
-    # Private Reply (recipient.comment_id) com o botão de link direto.
-    # Se a API recusar esse formato no primeiro contato, cai pro fluxo em
+def send_private_reply_with_click(comment_id: str, variant: str) -> bool:
+    # Versão B: link escrito no texto, sem botão.
+    if variant == "b":
+        text_b = random.choice(DM_TEXTS_B).format(link=LINK_B)
+        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": {"text": text_b}})
+        if resp.ok:
+            log.info("Private Reply enviada (comment_id=%s, versão B, link no texto): %s", comment_id, resp.text)
+            return True
+        log.error("Private Reply versão B falhou (comment_id=%s): %s", comment_id, resp.text)
+        return False
+
+    # Versão A: botão de link direto. Se a API recusar, cai pro fluxo em
     # duas etapas (quick_reply -> segunda DM com o link).
+    text = random.choice(DM_TEXTS)
     link_button_body = {
         "recipient": {"comment_id": comment_id},
         "message": {
@@ -233,15 +404,15 @@ def send_private_reply_with_click(comment_id: str, text: str):
                 "payload": {
                     "template_type": "button",
                     "text": text,
-                    "buttons": [{"type": "web_url", "url": DM_LINK, "title": DM_BUTTON_TITLE}],
+                    "buttons": [{"type": "web_url", "url": LINK_A, "title": DM_BUTTON_TITLE}],
                 },
             }
         },
     }
     resp = _post_message(link_button_body)
     if resp.ok:
-        log.info("Private Reply enviada (comment_id=%s, formato=link_button): %s", comment_id, resp.text)
-        return
+        log.info("Private Reply enviada (comment_id=%s, versão A, link_button): %s", comment_id, resp.text)
+        return True
     log.error("Private Reply com link_button recusada (comment_id=%s): %s", comment_id, resp.text)
 
     quick_reply_body = {
@@ -255,8 +426,8 @@ def send_private_reply_with_click(comment_id: str, text: str):
     }
     resp = _post_message(quick_reply_body)
     if resp.ok:
-        log.info("Private Reply enviada (comment_id=%s, formato=quick_reply): %s", comment_id, resp.text)
-        return
+        log.info("Private Reply enviada (comment_id=%s, versão A, quick_reply): %s", comment_id, resp.text)
+        return True
     log.error("Private Reply com quick_reply recusada (comment_id=%s): %s", comment_id, resp.text)
 
     postback_body = {
@@ -276,9 +447,10 @@ def send_private_reply_with_click(comment_id: str, text: str):
     }
     resp = _post_message(postback_body)
     if resp.ok:
-        log.info("Private Reply enviada (comment_id=%s, formato=postback): %s", comment_id, resp.text)
-    else:
-        log.error("Erro ao enviar Private Reply (comment_id=%s, formato=postback): %s", comment_id, resp.text)
+        log.info("Private Reply enviada (comment_id=%s, versão A, postback): %s", comment_id, resp.text)
+        return True
+    log.error("Erro ao enviar Private Reply (comment_id=%s, formato=postback): %s", comment_id, resp.text)
+    return False
 
 
 def handle_messaging_event(entry: dict, event: dict):
@@ -306,13 +478,15 @@ def handle_messaging_event(entry: dict, event: dict):
 
 
 def send_final_dm(igsid: str):
-    text = random.choice(FINAL_DM_TEXTS).format(link=DM_LINK)
+    text = random.choice(FINAL_DM_TEXTS).format(link=LINK_A)
     resp = _post_message({"recipient": {"id": igsid}, "message": {"text": text}})
     if resp.ok:
         log.info("Segunda DM enviada (igsid=%s): %s", igsid, resp.text)
     else:
         log.error("Erro ao enviar segunda DM (igsid=%s): %s", igsid, resp.text)
 
+
+init_db()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
