@@ -49,7 +49,7 @@ DM_TEXTS = [
 DM_LINK = "https://cilene-sales-page.vercel.app"
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://ig-bot-dicas-cilene.onrender.com").rstrip("/")
 LINK_A = PUBLIC_URL + "/go/a"
-LINK_B = PUBLIC_URL + "/go/b"
+LINK_B = DM_LINK
 DATABASE_URL = os.environ.get("DATABASE_URL")
 STATS_KEY = os.environ.get("STATS_KEY", "")
 
@@ -134,7 +134,8 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
 
 
 def pick_variant() -> str:
-    return random.choice(("a", "b"))
+    # teste A/B encerrado: link no texto venceu
+    return "b"
 
 
 def already_processed(comment_id: str) -> bool:
