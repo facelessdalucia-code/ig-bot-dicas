@@ -1,5 +1,6 @@
 import os
 import html
+import json
 import logging
 import uuid
 import random
@@ -7,7 +8,7 @@ import threading
 import time
 
 import requests
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, Response
 
 try:
     import psycopg
@@ -71,6 +72,41 @@ DM_TEXTS_B = [
     "pode te ajudar hoje.\n\n"
     "Clica no link pra fazer:\n{link}",
 ]
+COPIES = {
+    "m1": (
+        "Oi! Que bom que você comentou 💚\n\n"
+        "Deixa eu te passar uma que eu faço sempre: 1 xícara de água quente, 3 folhas de hortelã "
+        "e 1 rodela de limão. Abafa por 5 minutinhos e toma de manhã, pra começar o dia mais leve 🌿\n\n"
+        "Essa e mais 99 receitinhas da minha família estão todas organizadas aqui:\n{link}"
+    ),
+    "m2": (
+        "Oi, tudo bem? 🌿\n\n"
+        "Sabe aquela receita que você salva e, na hora de precisar, não acha mais? "
+        "Juntei as 100 receitas naturais que aprendi com a minha mãe e a minha avó, "
+        "organizadas por necessidade, com medida, horário e cuidados.\n\n"
+        "Dá uma olhada aqui:\n{link}"
+    ),
+    "m3": (
+        "Oi! Obrigada pelo comentário 💛\n\n"
+        "Minha avó tinha um chá pra cada coisa: um pra dormir melhor, um pra digestão, "
+        "um banho de pés pro fim do dia… Passei anos anotando tudo, e agora estão as "
+        "100 receitas juntas num lugar só.\n\n"
+        "Te mostro aqui:\n{link}"
+    ),
+    "m4": (
+        "Oi! Que bom ter você aqui ✨\n\n"
+        "Aqui estão as minhas 100 receitas naturais de casa, com ingredientes simples "
+        "de mercado e feira:\n{link}"
+    ),
+}
+COPY_NAMES = {"m1": "1 — Valor primeiro", "m2": "2 — Dor", "m3": "3 — História", "m4": "4 — Direta"}
+TRACK_EVENTS = {"landed", "cta"}
+
+
+def copy_text(variant: str) -> str:
+    return COPIES[variant].format(link=f"{DM_LINK}/?m={variant[1:]}")
+
+
 DM_BUTTON_TITLE = "Clique aqui para receber"  # usado só no fluxo do Facebook
 
 CLICK_BUTTON_TITLE = "QUERO ✅"
@@ -134,8 +170,7 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
 
 
 def pick_variant() -> str:
-    # teste A/B encerrado: link no texto venceu
-    return "b"
+    return random.choice(list(COPIES))
 
 
 def already_processed(comment_id: str) -> bool:
@@ -192,11 +227,31 @@ def go(variant):
     return resp
 
 
+@app.route("/t", methods=["POST", "OPTIONS"])
+def track():
+    resp = Response(status=204)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    if request.method == "OPTIONS":
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+    try:
+        body = json.loads(request.get_data(as_text=True) or "{}")
+    except ValueError:
+        return resp
+    if not isinstance(body, dict):
+        return resp
+    v, e, sid = body.get("v"), body.get("e"), str(body.get("s") or "")
+    if v in COPIES and e in TRACK_EVENTS and 0 < len(sid) <= 64:
+        record(v, e, sid)
+    return resp
+
+
 STATS_SQL = """
 SELECT variant,
   COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
-  COUNT(*) FILTER (WHERE evt = 'landed') AS clicks,
-  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS people
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS people,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
 FROM ab_events_cilene GROUP BY variant
 """
 
@@ -207,24 +262,25 @@ def _pct(n, d):
 
 STATS_PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60"><title>Teste A/B — Cilene</title>
+<meta http-equiv="refresh" content="60"><title>Teste de copys — Cilene</title>
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f5f2;color:#1d1d1f;margin:0;padding:24px 16px}
 main{max-width:760px;margin:0 auto}
 .wrap{overflow-x:auto;background:#fff;border:1px solid #e3e1dc;border-radius:12px}
-table{border-collapse:collapse;width:100%;min-width:520px}
+table{border-collapse:collapse;width:100%;min-width:620px}
 th,td{padding:12px 14px;border-bottom:1px solid #eee;text-align:right;font-variant-numeric:tabular-nums}
 thead th{text-align:left;font-size:12px;color:#666;font-weight:600}
 tbody th{text-align:left;font-weight:600}
 p.note{color:#666;font-size:13px;line-height:1.5}
 </style></head><body><main>
-<h1>Teste A/B — bot Cilene</h1>__ERR__
-<div class="wrap"><table><thead><tr><th>Versão</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
-<th>% que entrou</th><th>Cliques totais</th></tr></thead>
+<h1>Teste de copys da DM — bot Cilene</h1>__ERR__
+<div class="wrap"><table><thead><tr><th>Mensagem</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
+<th>% que entrou</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
-<p class="note">Cada comentário sorteia A ou B (50/50). "Pessoas que entraram" conta cada navegador uma vez;
-"Cliques totais" inclui quem clicou mais de uma vez. A comparação mais justa é a coluna "% que entrou".
-Espere umas 100 DMs em cada versão antes de decidir. A página atualiza sozinha a cada minuto.</p>
+<p class="note">Cada comentário sorteia uma das 4 mensagens (25% cada). "Entraram" e "clicaram" contam pessoas
+diferentes (o mesmo navegador conta uma vez) e dependem do script instalado na página da Vercel.
+"Clicaram em comprar" é o clique em um botão "Quero"; a venda em si aparece na Zuptos.
+Espere umas 100 DMs em cada mensagem antes de decidir. A página atualiza sozinha a cada minuto.</p>
 </main></body></html>"""
 
 
@@ -232,7 +288,7 @@ Espere umas 100 DMs em cada versão antes de decidir. A página atualiza sozinha
 def stats():
     if not STATS_KEY or request.args.get("key") != STATS_KEY:
         return "forbidden", 403
-    rows = {"a": (0, 0, 0), "b": (0, 0, 0)}
+    rows = {v: (0, 0, 0) for v in COPIES}
     err = ""
     if DATABASE_URL and psycopg:
         try:
@@ -244,13 +300,12 @@ def stats():
             err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
     else:
         err = "<p style='color:#b00'>Banco não configurado.</p>"
-    names = {"a": "A — DM com botão", "b": "B — link no texto"}
     trs = ""
-    for v in ("a", "b"):
-        dms, clicks, people = rows[v]
+    for v in COPIES:
+        dms, people, cta = rows[v]
         trs += (
-            f"<tr><th>{names[v]}</th><td>{dms}</td><td>{people}</td>"
-            f"<td>{_pct(people, dms)}</td><td>{clicks}</td></tr>"
+            f"<tr><th>{COPY_NAMES[v]}</th><td>{dms}</td><td>{people}</td>"
+            f"<td>{_pct(people, dms)}</td><td>{cta}</td><td>{_pct(cta, people)}</td></tr>"
         )
     return STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs), 200
 
@@ -302,7 +357,9 @@ def process_facebook_event(data: dict):
                 data={"message": random.choice(PUBLIC_REPLIES).replace("direct", "inbox")},
             )
             variant = pick_variant()
-            if variant == "b":
+            if variant in COPIES:
+                message = {"text": copy_text(variant)}
+            elif variant == "b":
                 message = {"text": random.choice(DM_TEXTS_B).format(link=LINK_B)}
             else:
                 message = {
@@ -384,6 +441,14 @@ def _post_message(body: dict) -> requests.Response:
 
 
 def send_private_reply_with_click(comment_id: str, variant: str) -> bool:
+    if variant in COPIES:
+        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": {"text": copy_text(variant)}})
+        if resp.ok:
+            log.info("Private Reply enviada (comment_id=%s, copy %s): %s", comment_id, variant, resp.text)
+            return True
+        log.error("Private Reply copy %s falhou (comment_id=%s): %s", variant, comment_id, resp.text)
+        return False
+
     # Versão B: link escrito no texto, sem botão.
     if variant == "b":
         text_b = random.choice(DM_TEXTS_B).format(link=LINK_B)
