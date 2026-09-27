@@ -169,8 +169,11 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
         log.exception("record falhou (%s %s)", variant, evt)
 
 
+COPY_WEIGHTS = {"m1": 3, "m2": 1, "m3": 1, "m4": 1}
+
+
 def pick_variant() -> str:
-    return random.choice(list(COPIES))
+    return random.choices(list(COPY_WEIGHTS), weights=list(COPY_WEIGHTS.values()))[0]
 
 
 def already_processed(comment_id: str) -> bool:
@@ -277,7 +280,7 @@ p.note{color:#666;font-size:13px;line-height:1.5}
 <div class="wrap"><table><thead><tr><th>Mensagem</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
 <th>% que entrou</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
-<p class="note">Cada comentário sorteia uma das 4 mensagens (25% cada). "Entraram" e "clicaram" contam pessoas
+<p class="note">A mensagem 1 recebe 50% dos comentários e as mensagens 2, 3 e 4 dividem o resto (~17% cada), desde 27/09; antes era 25% cada. Compare pela coluna de porcentagem, não pelo total. "Entraram" e "clicaram" contam pessoas
 diferentes (o mesmo navegador conta uma vez) e dependem do script instalado na página da Vercel.
 "Clicaram em comprar" é o clique em um botão "Quero"; a venda em si aparece na Zuptos.
 Espere umas 100 DMs em cada mensagem antes de decidir. A página atualiza sozinha a cada minuto.</p>
