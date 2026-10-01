@@ -103,8 +103,31 @@ COPY_NAMES = {"m1": "1 — Valor primeiro", "m2": "2 — Dor", "m3": "3 — Hist
 TRACK_EVENTS = {"landed", "cta"}
 
 
+COPY_BUTTON_TITLE = "Ver as receitas"
+
+
+def copy_link(variant: str) -> str:
+    return f"{DM_LINK}/?m={variant[1:]}"
+
+
 def copy_text(variant: str) -> str:
-    return COPIES[variant].format(link=f"{DM_LINK}/?m={variant[1:]}")
+    return COPIES[variant].format(link=copy_link(variant))
+
+
+def copy_button(variant: str) -> dict:
+    # Botão de link: em "solicitação de mensagem" o Instagram não deixa link
+    # escrito no texto clicável, mas o botão funciona.
+    text = COPIES[variant].replace("\n{link}", "").strip()
+    return {
+        "attachment": {
+            "type": "template",
+            "payload": {
+                "template_type": "button",
+                "text": text,
+                "buttons": [{"type": "web_url", "url": copy_link(variant), "title": COPY_BUTTON_TITLE}],
+            },
+        }
+    }
 
 
 DM_BUTTON_TITLE = "Clique aqui para receber"  # usado só no fluxo do Facebook
@@ -392,7 +415,7 @@ def process_facebook_event(data: dict):
             )
             variant = pick_variant()
             if variant in COPIES:
-                message = {"text": copy_text(variant)}
+                message = copy_button(variant)
             elif variant == "b":
                 message = {"text": random.choice(DM_TEXTS_B).format(link=LINK_B)}
             else:
@@ -476,9 +499,14 @@ def _post_message(body: dict) -> requests.Response:
 
 def send_private_reply_with_click(comment_id: str, variant: str) -> bool:
     if variant in COPIES:
+        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": copy_button(variant)})
+        if resp.ok:
+            log.info("Private Reply enviada (comment_id=%s, copy %s, botão): %s", comment_id, variant, resp.text)
+            return True
+        log.error("Private Reply copy %s com botão recusada (comment_id=%s): %s", variant, comment_id, resp.text)
         resp = _post_message({"recipient": {"comment_id": comment_id}, "message": {"text": copy_text(variant)}})
         if resp.ok:
-            log.info("Private Reply enviada (comment_id=%s, copy %s): %s", comment_id, variant, resp.text)
+            log.info("Private Reply enviada (comment_id=%s, copy %s, texto): %s", comment_id, variant, resp.text)
             return True
         log.error("Private Reply copy %s falhou (comment_id=%s): %s", variant, comment_id, resp.text)
         return False
