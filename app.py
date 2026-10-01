@@ -114,6 +114,31 @@ def copy_text(variant: str) -> str:
     return COPIES[variant].format(link=copy_link(variant))
 
 
+
+FORMATS = {"m1": "Só link no texto", "m2": "Link no texto + botão"}
+FORMAT_TEST_START = os.environ.get("FORMAT_TEST_START", "2100-01-01T00:00:00Z")
+
+
+def format_message(variant: str):
+    # O texto sorteia um dos 4 textos; o formato (com ou sem botão) é o que está em teste.
+    link = f"{DM_LINK}/?m={variant[1:]}"
+    text = COPIES[random.choice(list(COPIES))].format(link=link)
+    if variant == "m2":
+        msg = {
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "button",
+                    "text": text,
+                    "buttons": [{"type": "web_url", "url": link, "title": COPY_BUTTON_TITLE}],
+                },
+            }
+        }
+    else:
+        msg = {"text": text}
+    return msg, text
+
+
 def copy_button(variant: str) -> dict:
     # Botão de link: em "solicitação de mensagem" o Instagram não deixa link
     # escrito no texto clicável, mas o botão funciona.
@@ -192,11 +217,8 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
         log.exception("record falhou (%s %s)", variant, evt)
 
 
-COPY_WEIGHTS = {"m1": 3, "m2": 1, "m3": 1, "m4": 1}
-
-
 def pick_variant() -> str:
-    return random.choices(list(COPY_WEIGHTS), weights=list(COPY_WEIGHTS.values()))[0]
+    return random.choice(list(FORMATS))
 
 
 def already_processed(comment_id: str) -> bool:
@@ -278,7 +300,15 @@ SELECT variant,
   COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS people,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
-FROM ab_events_cilene GROUP BY variant
+FROM ab_events_cilene WHERE ts < %(start)s GROUP BY variant
+"""
+
+FORMAT_SQL = """
+SELECT variant,
+  COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS people,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
+FROM ab_events_cilene WHERE ts >= %(start)s AND variant IN ('m1', 'm2') GROUP BY variant
 """
 
 
@@ -288,7 +318,7 @@ def _pct(n, d):
 
 STATS_PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60"><title>Teste de copys — Cilene</title>
+<meta http-equiv="refresh" content="60"><title>Testes — Cilene</title>
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f5f2;color:#1d1d1f;margin:0;padding:24px 16px}
 main{max-width:760px;margin:0 auto}
@@ -299,7 +329,15 @@ thead th{text-align:left;font-size:12px;color:#666;font-weight:600}
 tbody th{text-align:left;font-weight:600}
 p.note{color:#666;font-size:13px;line-height:1.5}
 </style></head><body><main>
-<h1>Teste de copys da DM — bot Cilene</h1>__ERR__
+<h1>Bot Cilene — testes</h1>__ERR__
+<h2>Teste do formato da DM (em andamento)</h2>
+<div class="wrap"><table><thead><tr><th>Formato</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
+<th>% que entrou</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
+<tbody>__FORMAT__</tbody></table></div>
+<p class="note">Desde __START__. Cada comentário sorteia 50/50 entre mandar só o link escrito no texto ou o link no texto
+com um botão embaixo. O texto é sorteado entre os 4 textos nos dois formatos. A coluna que decide é "% que entrou".
+Espere umas 100 DMs em cada formato antes de decidir.</p>
+<h2 style="margin-top:36px">Teste dos 4 textos da DM (encerrado em 01/10)</h2>
 <div class="wrap"><table><thead><tr><th>Mensagem</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
 <th>% que entrou</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
@@ -396,13 +434,17 @@ def stats():
     if not STATS_KEY or request.args.get("key") != STATS_KEY:
         return "forbidden", 403
     rows = {v: (0, 0, 0) for v in COPIES}
+    frows = {v: (0, 0, 0) for v in FORMATS}
     err = ""
     if DATABASE_URL and psycopg:
         try:
             with _db() as conn:
-                for v, *nums in conn.execute(STATS_SQL).fetchall():
+                for v, *nums in conn.execute(STATS_SQL, {"start": FORMAT_TEST_START}).fetchall():
                     if v in rows:
                         rows[v] = tuple(nums)
+                for v, *nums in conn.execute(FORMAT_SQL, {"start": FORMAT_TEST_START}).fetchall():
+                    if v in frows:
+                        frows[v] = tuple(nums)
         except Exception as exc:
             err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
     else:
@@ -414,7 +456,16 @@ def stats():
             f"<tr><th>{COPY_NAMES[v]}</th><td>{dms}</td><td>{people}</td>"
             f"<td>{_pct(people, dms)}</td><td>{cta}</td><td>{_pct(cta, people)}</td></tr>"
         )
-    return STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs), 200
+    ftrs = ""
+    for v in FORMATS:
+        dms, people, cta = frows[v]
+        ftrs += (
+            f"<tr><th>{FORMATS[v]}</th><td>{dms}</td><td>{people}</td>"
+            f"<td>{_pct(people, dms)}</td><td>{cta}</td><td>{_pct(cta, people)}</td></tr>"
+        )
+    start_label = html.escape(FORMAT_TEST_START.replace("T", " ")[:16]) + " UTC"
+    page = STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs)
+    return page.replace("__FORMAT__", ftrs).replace("__START__", start_label), 200
 
 
 @app.route("/webhook", methods=["GET"])
@@ -464,8 +515,8 @@ def process_facebook_event(data: dict):
                 data={"message": random.choice(PUBLIC_REPLIES).replace("direct", "inbox")},
             )
             variant = pick_variant()
-            if variant in COPIES:
-                message = copy_button(variant)
+            if variant in FORMATS:
+                message = format_message(variant)[0]
             elif variant == "b":
                 message = {"text": random.choice(DM_TEXTS_B).format(link=LINK_B)}
             else:
@@ -548,13 +599,16 @@ def _post_message(body: dict) -> requests.Response:
 
 
 def send_private_reply_with_click(comment_id: str, variant: str) -> bool:
-    if variant in COPIES:
-        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": copy_button(variant)})
+    if variant in FORMATS:
+        msg, text = format_message(variant)
+        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": msg})
         if resp.ok:
-            log.info("Private Reply enviada (comment_id=%s, copy %s, botão): %s", comment_id, variant, resp.text)
+            log.info("Private Reply enviada (comment_id=%s, formato %s): %s", comment_id, variant, resp.text)
             return True
-        log.error("Private Reply copy %s com botão recusada (comment_id=%s): %s", variant, comment_id, resp.text)
-        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": {"text": copy_text(variant)}})
+        log.error("Private Reply formato %s recusada (comment_id=%s): %s", variant, comment_id, resp.text)
+        if variant == "m1":
+            return False
+        resp = _post_message({"recipient": {"comment_id": comment_id}, "message": {"text": text}})
         if resp.ok:
             log.info("Private Reply enviada (comment_id=%s, copy %s, texto): %s", comment_id, variant, resp.text)
             return True
