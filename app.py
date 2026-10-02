@@ -341,7 +341,7 @@ Espere umas 100 DMs em cada formato antes de decidir.</p>
 <div class="wrap"><table><thead><tr><th>Mensagem</th><th>DMs enviadas</th><th>Pessoas que entraram</th>
 <th>% que entrou</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
-<p class="note">A mensagem 1 recebe 50% dos comentários e as mensagens 2, 3 e 4 dividem o resto (~17% cada), desde 27/09; antes era 25% cada. Compare pela coluna de porcentagem, não pelo total. "Entraram" e "clicaram" contam pessoas
+<p class="note">Números até o início do teste de formato. A mensagem 1 recebeu 50% entre 27/09 e 01/10; antes disso era 25% cada. Desde 01/10 os 4 textos são sorteados 25% cada, mas não são mais contados separadamente. Compare pela coluna de porcentagem, não pelo total. "Entraram" e "clicaram" contam pessoas
 diferentes (o mesmo navegador conta uma vez) e dependem do script instalado na página da Vercel.
 "Clicaram em comprar" é o clique em um botão "Quero"; a venda em si aparece na Zuptos.
 Espere umas 100 DMs em cada mensagem antes de decidir. A página atualiza sozinha a cada minuto.</p>
