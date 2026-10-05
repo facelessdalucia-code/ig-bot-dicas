@@ -80,16 +80,19 @@ def comentario(conta: str, cfg: dict, v: dict):
     cid, de, texto = v.get("id"), v.get("from", {}), (v.get("text") or "")
     if not cid or v.get("parent_id") or de.get("id") == conta or de.get("username") == cfg.get("username"):
         return
+    if uma_vez("v" + cid):
+        contar(cfg["perfil"], "org", "comment")  # todo comentário recebido (painel dos parceiros)
     if cfg.get("palavra") and cfg["palavra"].lower() not in texto.lower():
         return
     if not uma_vez("c" + cid) or not dentro_do_limite(conta):
         return
     var = lado(de.get("id") or cid)
     post(cfg, f"{cid}/replies", data={"message": random.choice(cfg.get("publicas") or PUBLICAS)})
-    link = link_com(cfg, var) if cfg.get("medir", True) else cfg["link"]
+    link = (f"{FUNIL}/r/{cfg['perfil']}" if cfg.get("rastrear") and FUNIL else
+            link_com(cfg, var) if cfg.get("medir", True) else cfg["link"])
     msg = cfg["dm"].replace("LINK", link) if cfg.get("dm") else DM.format(ponto=cfg["ponto"], onde=cfg["onde"], produto=cfg["produto"], link=link)
     if post(cfg, "me/messages", json={"recipient": {"comment_id": cid}, "message": {"text": msg}}):
-        contar(cfg["perfil"], var, "dm_sent")
+        contar(cfg["perfil"], "dm" if cfg.get("rastrear") else var, "dm_sent")
         log.info("%s: DM enviada (%s, %s)", cfg["perfil"], de.get("username"), var)
 
 
