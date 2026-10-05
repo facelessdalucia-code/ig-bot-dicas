@@ -548,7 +548,11 @@ def process_event(data: dict):
         if FB_PAGE_ACCESS_TOKEN:
             process_facebook_event(data)
         return
+    import perfis
     for entry in data.get("entry", []):
+        if str(entry.get("id")) in perfis.PERFIS and str(entry.get("id")) != str(IG_USER_ID):
+            perfis.processar({"entry": [entry]})  # Maggie, Walt... (mesmo app, outro perfil)
+            continue
         for event in entry.get("messaging", []):
             handle_messaging_event(entry, event)
         for change in entry.get("changes", []):
